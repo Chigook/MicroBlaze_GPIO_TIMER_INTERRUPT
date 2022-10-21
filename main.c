@@ -53,8 +53,9 @@
 #include "sleep.h"
 #include "xil_exception.h"
 #include "xintc.h"
+#include "xtmrctr.h"
 
-#define CHANNEL_1   1
+#define CHANNEL_1   			   1
 #define GPIO_BTN_DEVICE_ID         XPAR_AXI_GPIO_1_DEVICE_ID
 #define BTN_INT_MASK_IR_CH1_MASK   XGPIO_IR_CH1_MASK
 
@@ -63,7 +64,19 @@
 #define INTC_DEVICE_ID             XPAR_INTC_0_DEVICE_ID
 #define INTC_BTN_INT_VEC_ID        XPAR_INTC_0_GPIO_1_VEC_ID
 
+#define TMRCTR_DEVICE_ID		   XPAR_TMRCTR_0_DEVICE_ID
+#define TMRCTR_INT_VECTOR_ID	   XPAR_INTC_0_TMRCTR_0_VEC_ID
+#define TIMER_CNTR_0			   0
+
+uint32_t resetValue = 0xffffffff - 100000000;		//1sec //ff까지 counter
+//uint32_t resetValue = 0xffffffff - 1000000;		//10msec
+//uint32_t resetValue = 0xffffffff - 100000;		//1msec
+
+void TimerCounterHandler(void *CallBackRef, uint8_t TmrCtrNumber);
+
 void GpioHandler(void* CallBackRef);
+
+XTmrCtr TimerCounterInst;
 
 XGpio Gpio_Led;
 XGpio Gpio_Button;
@@ -91,7 +104,7 @@ void INTTERUPT_Init()
 
     // Interrupt Controller의  Vector Table에 Jump할 함수 할당
     // 함수 이름만 사용하면 함수 주소를 불러오는 것
-    // 해당되는 모든 Device의 Interrupt를 전부 감시 --> GPIO1인 button에 입력을 전부 다 감시
+    // 해당되는 모든 Device의 Interrupt를 전부 감시 --> GPIO1인 button의 입력을 전부 다 감시
     XIntc_Connect(&Intc, INTC_BTN_INT_VEC_ID, (Xil_ExceptionHandler)GpioHandler, &Gpio_Button);
 
     // Enable the Interrupt vector at the interrupt controller
@@ -101,9 +114,26 @@ void INTTERUPT_Init()
     // and handled by the processor
     XIntc_Start(&Intc, XIN_REAL_MODE);
 
-    //Enable
+    //GPIO Interrupt Enable
     XGpio_InterruptEnable(&Gpio_Button, CHANNEL_1);
     XGpio_InterruptGlobalEnable(&Gpio_Button);
+
+    /*Timer Interrupt Setup*/
+    //Vector Table Connect
+    XIntc_Connect(&Intc, TMRCTR_INT_VECTOR_ID, (XInterruptHandler)XTmrCtr_InterruptHandler,
+    		&TimerCounterInst);
+
+    XIntc_Enable(&Intc, TMRCTR_INT_VECTOR_ID);
+
+    //Handler Connect
+    XTmrCtr_SetHandler(&TimerCounterInst, TimerCounterHandler, &TimerCounterInst);
+
+    //INTERRUPT가 걸리면 자동으로 resetValue값을 다시 읽겠다
+    XTmrCtr_SetOptions(&TimerCounterInst, TIMER_CNTR_0, XTC_INT_MODE_OPTION | XTC_AUTO_RELOAD_OPTION);
+    XTmrCtr_SetResetValue(&TimerCounterInst, TIMER_CNTR_0, resetValue);
+
+    //Interrupt Start
+    XTmrCtr_Start(&TimerCounterInst, TIMER_CNTR_0);
 
     // Exception Setup
     Xil_ExceptionInit();
@@ -116,7 +146,15 @@ int main()
     init_platform();
     Button_Init();
     Led_Init();
+
+    XTmrCtr_Initialize(&TimerCounterInst, TMRCTR_DEVICE_ID);
+    XTmrCtr_SelfTest(&TimerCounterInst, TIMER_CNTR_0);
+
     INTTERUPT_Init();
+
+
+
+
 
     while(1)
     {
@@ -148,4 +186,11 @@ void GpioHandler(void *CallBackRef) //void *CallBackRef --> void pointer 자료형�
       }
 
    XGpio_InterruptClear(pGpio, CHANNEL_1); //Clear 꼭 선언 해야함 안하면 Interrupt후에 오동작함
+}
+
+void TimerCounterHandler(void *CallBackRef, uint8_t TmrCtrNumber)
+{
+	static int counter = 0;
+	printf("Timer/Counter Interrupt : %d\n", counter++);
+
 }
